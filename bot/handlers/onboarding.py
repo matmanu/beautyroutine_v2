@@ -7,6 +7,7 @@ import logging
 
 from telegram import Update
 from telegram.constants import ChatAction
+from telegram.error import BadRequest
 from telegram.ext import (
     CallbackQueryHandler,
     CommandHandler,
@@ -41,6 +42,17 @@ ELECTRIC_TOOLS = {"nuface", "sauna", "dermaroller"}
 
 def _sel(context: ContextTypes.DEFAULT_TYPE, key: str) -> set[str]:
     return context.user_data.setdefault(f"sel_{key}", set())
+
+
+async def _edit_markup(query, markup) -> None:
+    """Telegram rifiuta l'edit se la tastiera risultante è identica a quella
+    già a schermo. Succede quando un tap non cambia nulla, ad esempio
+    ritoccando "Nessuna" quand'è già l'unica selezione. Non è un errore vero."""
+    try:
+        await query.edit_message_reply_markup(markup)
+    except BadRequest as exc:
+        if "not modified" not in str(exc).lower():
+            raise
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -81,10 +93,11 @@ async def on_tools(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return await _ask_days(query, context)
 
     selected.symmetric_difference_update({choice})
-    await query.edit_message_reply_markup(
+    await _edit_markup(
+        query,
         multiselect(
             _tools_with_custom(context), selected, "t", add_label="➕ Aggiungi altro"
-        )
+        ),
     )
     return TOOLS_STATE
 
@@ -143,7 +156,7 @@ async def on_days(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return DURATION
 
     selected.symmetric_difference_update({choice})
-    await query.edit_message_reply_markup(multiselect(DAYS, selected, "d", columns=2))
+    await _edit_markup(query, multiselect(DAYS, selected, "d", columns=2))
     return DAYS_STATE
 
 
@@ -190,7 +203,7 @@ async def on_concerns(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int
         return ACTIVES_STATE
 
     selected.symmetric_difference_update({choice})
-    await query.edit_message_reply_markup(multiselect(CONCERNS, selected, "c"))
+    await _edit_markup(query, multiselect(CONCERNS, selected, "c"))
     return CONCERNS_STATE
 
 
@@ -214,7 +227,7 @@ async def on_actives(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         return await _ask_reminder(query, context)
 
     selected.symmetric_difference_update({choice})
-    await query.edit_message_reply_markup(multiselect(ACTIVES, selected, "a"))
+    await _edit_markup(query, multiselect(ACTIVES, selected, "a"))
     return ACTIVES_STATE
 
 
@@ -234,7 +247,7 @@ async def on_safety(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         selected.discard("nessuna")
         selected.symmetric_difference_update({choice})
 
-    await query.edit_message_reply_markup(multiselect(SAFETY_FLAGS, selected, "s"))
+    await _edit_markup(query, multiselect(SAFETY_FLAGS, selected, "s"))
     return SAFETY
 
 
