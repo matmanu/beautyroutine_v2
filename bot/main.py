@@ -7,7 +7,7 @@ import logging
 import os
 
 from telegram import BotCommand
-from telegram.ext import Application, ApplicationBuilder
+from telegram.ext import Application, ApplicationBuilder, ContextTypes
 
 from .config import settings
 from .db import init_db
@@ -41,6 +41,21 @@ async def post_init(app: Application) -> None:
     logger.info("Bot avviato con provider LLM: %s", settings.llm_provider)
 
 
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Senza questo, PTB logga l'eccezione e l'utente resta a fissare il vuoto."""
+    logger.error("Errore non gestito", exc_info=context.error)
+
+    chat = getattr(getattr(update, "effective_chat", None), "id", None)
+    if chat is None:
+        return
+    try:
+        await context.bot.send_message(
+            chat, "😕 Qualcosa è andato storto. Riprova, o scrivi /aiuto."
+        )
+    except Exception:  # se anche l'avviso fallisce, non insistiamo
+        logger.debug("Impossibile notificare l'errore a %s", chat)
+
+
 def build_app() -> Application:
     app = (
         ApplicationBuilder()
@@ -50,6 +65,7 @@ def build_app() -> Application:
     )
     app.add_handler(build_onboarding_handler())
     commands.register(app)
+    app.add_error_handler(on_error)
     auth.install(app)  # gruppo -1: intercetta tutto prima degli handler normali
     return app
 
