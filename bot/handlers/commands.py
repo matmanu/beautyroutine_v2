@@ -119,7 +119,11 @@ async def cmd_aiuto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/rigenera — nuova versione del piano, stesso profilo\n"
         "/modifica — rifai la configurazione\n"
         "/promemoria — orario della notifica\n"
+        "/dimentica — azzera il filo del discorso\n"
         "/cancella — elimina i tuoi dati\n\n"
+        "Puoi anche scrivermi liberamente: conosco il tuo piano, quindi posso "
+        "dirti cosa saltare se sei di fretta o spiegarti perché un trattamento "
+        "sta in un certo giorno.\n\n"
         "<i>Questo bot non sostituisce il parere di un dermatologo.</i>",
         parse_mode="HTML",
     )

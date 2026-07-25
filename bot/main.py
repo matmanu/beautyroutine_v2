@@ -7,12 +7,13 @@ import logging
 import os
 
 from telegram import BotCommand
+from telegram.error import Conflict
 from telegram.ext import Application, ApplicationBuilder, ContextTypes
 
 from .config import settings
 from .db import init_db
 from . import auth
-from .handlers import commands
+from .handlers import chat, commands
 from .handlers.onboarding import build_onboarding_handler
 from .scheduler import restore_reminders
 
@@ -29,6 +30,7 @@ COMMANDS = [
     BotCommand("rigenera", "Rigenera il piano"),
     BotCommand("modifica", "Cambia strumenti, giorni o durata"),
     BotCommand("promemoria", "Orario della notifica"),
+    BotCommand("dimentica", "Azzera il filo del discorso"),
     BotCommand("cancella", "Elimina i tuoi dati"),
     BotCommand("aiuto", "Elenco dei comandi"),
 ]
@@ -43,6 +45,16 @@ async def post_init(app: Application) -> None:
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Senza questo, PTB logga l'eccezione e l'utente resta a fissare il vuoto."""
+    # Conflict = un'altra istanza sta facendo polling con lo stesso token.
+    # Lo stack trace non aggiunge nulla: meglio dire subito cosa controllare.
+    if isinstance(context.error, Conflict):
+        logger.error(
+            "CONFLITTO DI POLLING: un'altra istanza sta usando lo stesso "
+            "TELEGRAM_BOT_TOKEN. Controlla deployment duplicati su Railway, "
+            "repliche > 1, o un processo avviato in locale."
+        )
+        return
+
     logger.error("Errore non gestito", exc_info=context.error)
 
     chat = getattr(getattr(update, "effective_chat", None), "id", None)
@@ -65,6 +77,7 @@ def build_app() -> Application:
     )
     app.add_handler(build_onboarding_handler())
     commands.register(app)
+    chat.register(app)  # rete finale: cattura il testo che nessun altro gestisce
     app.add_error_handler(on_error)
     auth.install(app)  # gruppo -1: intercetta tutto prima degli handler normali
     return app

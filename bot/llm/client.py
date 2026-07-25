@@ -31,6 +31,13 @@ class LLMClient(ABC):
     async def complete_json(self, system: str, user: str) -> dict[str, Any]:
         ...
 
+    @abstractmethod
+    async def complete_text(
+        self, system: str, messages: list[dict[str, str]]
+    ) -> str:
+        """Risposta in linguaggio naturale, con storico della conversazione."""
+        ...
+
 
 class AnthropicClient(LLMClient):
     def __init__(self) -> None:
@@ -51,6 +58,19 @@ class AnthropicClient(LLMClient):
         )
         return extract_json(text)
 
+    async def complete_text(
+        self, system: str, messages: list[dict[str, str]]
+    ) -> str:
+        response = await self._client.messages.create(
+            model=self._model,
+            max_tokens=1500,
+            system=system,
+            messages=messages,
+        )
+        return "".join(
+            block.text for block in response.content if block.type == "text"
+        ).strip()
+
 
 class OpenAIClient(LLMClient):
     def __init__(self) -> None:
@@ -59,35 +79,51 @@ class OpenAIClient(LLMClient):
         self._client = AsyncOpenAI(api_key=settings.openai_api_key)
         self._model = settings.openai_model
 
-    async def complete_json(self, system: str, user: str) -> dict[str, Any]:
+    async def _create(
+        self, messages: list[dict[str, str]], *, json_mode: bool, budget: int
+    ):
+        """I modelli recenti (serie o / GPT-5) rifiutano `max_tokens` e vogliono
+        `max_completion_tokens`; i più vecchi fanno l'esatto contrario.
+        Proviamo il nome nuovo e ripieghiamo sul vecchio solo se serve."""
         from openai import BadRequestError
 
-        kwargs: dict[str, Any] = {
-            "model": self._model,
-            "response_format": {"type": "json_object"},
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-        }
+        kwargs: dict[str, Any] = {"model": self._model, "messages": messages}
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
 
-        # I modelli recenti (serie o / GPT-5) rifiutano `max_tokens` e vogliono
-        # `max_completion_tokens`; i più vecchi fanno l'esatto contrario.
-        # Proviamo il nome nuovo e ripieghiamo sul vecchio solo se serve.
-        # Il budget è generoso perché sui modelli di reasoning include
-        # anche i token di ragionamento, che non finiscono nell'output.
         try:
-            response = await self._client.chat.completions.create(
-                **kwargs, max_completion_tokens=16000
+            return await self._client.chat.completions.create(
+                **kwargs, max_completion_tokens=budget
             )
         except BadRequestError as exc:
             if "max_completion_tokens" not in str(exc):
                 raise
-            response = await self._client.chat.completions.create(
-                **kwargs, max_tokens=8000
+            return await self._client.chat.completions.create(
+                **kwargs, max_tokens=budget
             )
 
+    async def complete_json(self, system: str, user: str) -> dict[str, Any]:
+        # Budget generoso: sui modelli di reasoning il limite comprende anche
+        # i token di ragionamento, che non finiscono nell'output.
+        response = await self._create(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            json_mode=True,
+            budget=16000,
+        )
         return extract_json(response.choices[0].message.content or "")
+
+    async def complete_text(
+        self, system: str, messages: list[dict[str, str]]
+    ) -> str:
+        response = await self._create(
+            [{"role": "system", "content": system}, *messages],
+            json_mode=False,
+            budget=4000,
+        )
+        return (response.choices[0].message.content or "").strip()
 
 
 def get_client() -> LLMClient:
